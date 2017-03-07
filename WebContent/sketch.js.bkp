@@ -1,0 +1,382 @@
+var WINDOW_X = 800;
+var WINDOW_Y = 500;
+var AXES_OFFSET = 50;
+
+var robot = [ [ 400, 30 ], [ 420, 70 ], [ 440, 50 ] ];
+
+var goal = [ 50, 260 ];
+
+var obstacles = [ [ [ 310, 110 ], [ 330, 130 ], [ 350, 110 ] ],
+		[ [ 100, 200 ], [ 130, 130 ], [ 150, 110 ], [ 200, 150 ] ] ];
+
+function setup() {
+
+	createCanvas(WINDOW_X, WINDOW_Y);
+	stroke('black');
+	line(AXES_OFFSET, 0, AXES_OFFSET, WINDOW_Y);
+	line(0, WINDOW_Y - AXES_OFFSET, WINDOW_X, WINDOW_Y - AXES_OFFSET);
+
+	noFill();
+	stroke('red');
+	drawObject(robot);
+
+	stroke('blue');
+	for (var i = 0; i < obstacles.length; i++) {
+		var obstacle = obstacles[i];
+		drawObject(obstacle);
+	}
+
+	stroke('purple');
+	drawCircle(goal, 5);
+
+}
+
+function drawCObstacles() {
+	var robotOrigin = robot[0];
+	fill('yellow');
+
+	noFill();
+	drawCircle(robotOrigin, 5);
+	var reflectedRobot = [];
+	for (var k = 0; k < robot.length; k++) {
+		var robotVtx = robot[k];
+		var reflectedX = (robotOrigin[0] - robotVtx[0]);
+		var reflectedY = (robotOrigin[1] - robotVtx[1]);
+		reflectedRobot.push([ reflectedX, reflectedY ]);
+	}
+	stroke('pink');
+	drawObject(reflectedRobot);
+
+	var cObstacles = [];
+	for (var i = 0; i < obstacles.length; i++) {
+		var obstacle = obstacles[i];
+		var minkPoints = [];
+		for (var j = 0; j < obstacle.length; j++) {
+			var obstacleVtx = obstacle[j];
+			for (var k = 0; k < reflectedRobot.length; k++) {
+				var robotVtx = reflectedRobot[k];
+				var minkPointX = obstacleVtx[0] + robotVtx[0];
+				var minkPointY = obstacleVtx[1] + robotVtx[1];
+				minkPoints.push([ minkPointX, minkPointY ]);
+			}
+		}
+		var minkHull = convexHull(minkPoints);
+		cObstacles.push(minkHull);
+	}
+
+	stroke('green');
+	for (var i = 0; i < cObstacles.length; i++) {
+		var cObstacle = cObstacles[i];
+		drawObject(cObstacle);
+	}
+
+	var nodes = {};
+	nodes["start"] = {
+		point : robotOrigin,
+		tentativeDistance : 0,
+		path : null,
+		visited : false,
+		name : "start"
+	};
+	nodes["end"] = {
+		point : goal,
+		tentativeDistance : Number.MAX_VALUE,
+		path : null,
+		visited : false,
+		name : "end"
+	};
+	for (var i = 0; i < cObstacles.length; i++) {
+		var currentObstacle = cObstacles[i];
+		for (var j = 0; j < currentObstacle.length; j++) {
+			var currentVtx = currentObstacle[j];
+			var currentVtxName = vertexName(i, j);
+			nodes[currentVtxName] = {
+				point : currentVtx,
+				tentativeDistance : Number.MAX_VALUE,
+				path : null,
+				visited : false,
+				name : currentVtxName
+			};
+		}
+	}
+
+	var adjacencyMatrix = {};
+	for ( var i in nodes) {
+		adjacencyMatrix[i] = {};
+		for ( var j in nodes) {
+			adjacencyMatrix[i][j] = false;
+		}
+	}
+
+	var obstacleEdges = [];
+	for (var i = 0; i < cObstacles.length; i++) {
+		var currentObstacle = cObstacles[i];
+		for (var j = 0; j < currentObstacle.length; j++) {
+			var currentVtx = currentObstacle[j];
+			var currentVtxName = vertexName(i, j);
+			var nextVtx = null;
+			var nextVtxName = null;
+			if (j == currentObstacle.length - 1) {
+				nextVtx = currentObstacle[0];
+				nextVtxName = vertexName(i, 0);
+				obstacleEdges.push([ currentVtx, nextVtx ]);
+			} else {
+				nextVtx = currentObstacle[j + 1];
+				nextVtxName = vertexName(i, j + 1);
+			}
+			obstacleEdges.push([ currentVtx, nextVtx ]);
+			adjacencyMatrix[currentVtxName][nextVtxName] = true;
+			adjacencyMatrix[nextVtxName][currentVtxName] = true;
+		}
+	}
+
+	var visibilityEdge = [ robotOrigin, goal ];
+	if (!doesCollideWithObstacles(visibilityEdge, obstacleEdges)) {
+		adjacencyMatrix["start"]["end"] = true;
+		adjacencyMatrix["end"]["start"] = true;
+	}
+
+	for (var i = 0; i < cObstacles.length; i++) {
+		var currentObstacle = cObstacles[i];
+		for (var j = 0; j < currentObstacle.length; j++) {
+			var currentVtxName = vertexName(i, j);
+			var currentVtx = currentObstacle[j];
+			var visibilityEdge = [ robotOrigin, currentVtx ];
+			if (!doesCollideWithObstacles(visibilityEdge, obstacleEdges)) {
+				adjacencyMatrix["start"][currentVtxName] = true;
+				adjacencyMatrix[currentVtxName]["start"] = true;
+			}
+		}
+	}
+
+	for (var i = 0; i < cObstacles.length; i++) {
+		var currentObstacle = cObstacles[i];
+		for (var j = 0; j < currentObstacle.length; j++) {
+			var currentVtxName = vertexName(i, j);
+			var currentVtx = currentObstacle[j];
+			var visibilityEdge = [ goal, currentVtx ];
+			if (!doesCollideWithObstacles(visibilityEdge, obstacleEdges)) {
+				adjacencyMatrix["end"][currentVtxName] = true;
+				adjacencyMatrix[currentVtxName]["end"] = true;
+			}
+		}
+	}
+
+	for (var w = 0; w < cObstacles.length; w++) {
+		var currentObstacle = cObstacles[w];
+		for (var x = 0; x < currentObstacle.length; x++) {
+			var currentObstacleVtx = currentObstacle[x];
+			var currentObstacleVtxName = vertexName(w, x);
+			for (var y = 0; y < cObstacles.length; y++) {
+				var otherObstacle = cObstacles[y];
+				if (w != y) {
+					for (var z = 0; z < otherObstacle.length; z++) {
+						var otherObstacleVtx = otherObstacle[z];
+						var otherObstacleVtxName = vertexName(y, z);
+						var visibilityEdge = [ currentObstacleVtx,
+								otherObstacleVtx ];
+						if (!doesCollideWithObstacles(visibilityEdge,
+								obstacleEdges)) {
+							adjacencyMatrix[currentObstacleVtxName][otherObstacleVtxName] = true;
+							adjacencyMatrix[otherObstacleVtxName][otherObstacleVtxName] = true;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	stroke('darkgreen');
+	for ( var i in adjacencyMatrix) {
+		for ( var j in adjacencyMatrix[i]) {
+			if (adjacencyMatrix[i][j])
+				drawLine([ nodes[i].point, nodes[j].point ]);
+		}
+	}
+
+	stroke('red');
+	drawLines(obstacleEdges);
+
+	// Djikstra's algorithm
+	var currentNode = nodes["start"];
+	currentNode.tentativeDistance = 0;
+	currentNode.path = [ "start" ];
+
+	do {
+		var adjacencyColumn = adjacencyMatrix[currentNode.name];
+		for ( var i in adjacencyColumn) {
+			if (adjacencyColumn[i] == true) {
+				if (nodes[i].visited == false) {
+					var edgeDistance = distanceBetween(nodes[i], currentNode);
+					var newTentativeDistance = currentNode.tentativeDistance
+							+ edgeDistance;
+					if (newTentativeDistance < nodes[i].tentativeDistance) {
+						nodes[i].tentativeDistance = newTentativeDistance;
+						nodes[i].path = currentNode.path.concat([ i ]);
+					}
+				}
+			}
+		}
+		currentNode.visited = true;
+
+		var smallestDistanceInUnVisited = Number.MAX_VALUE;
+		var smallestDistanceNode = null;
+		for ( var i in nodes) {
+			if (nodes[i].visited == false) {
+				if (nodes[i].tentativeDistance < smallestDistanceInUnVisited) {
+					smallestDistanceInUnVisited = nodes[i].tentativeDistance;
+					smallestDistanceNode = nodes[i];
+				}
+			}
+		}
+
+		if (nodes["end"].visited == true
+				|| smallestDistanceInUnVisited == Number.MAX_VALUE) {
+			break;
+		}
+
+		currentNode = smallestDistanceNode;
+	} while (true);
+
+	stroke('blue');
+	var shortestPath = nodes["end"].path;
+	for (var i = 0; i < shortestPath.length - 1; i++) {
+		drawLine([ nodes[shortestPath[i]].point,
+				nodes[shortestPath[i + 1]].point ]);
+	}
+}
+
+function distanceBetween(point1, point2) {
+	return Math.sqrt((point2[0] - point1[0]) ^ 2 + (point2[1] - point1[1]) ^ 2);
+}
+
+function vertexName(obstacleIndex, vertexIndex) {
+	return "o-" + obstacleIndex + "-" + vertexIndex;
+}
+
+function doesCollideWithObstacles(visibilityEdge, obstacleEdges) {
+
+	var visibilityPoint0 = visibilityEdge[0];
+	var visibilityPoint1 = visibilityEdge[1];
+
+	var doesCollide = false;
+	for (var j = 0; j < obstacleEdges.length; j++) {
+		var obstacleEdge = obstacleEdges[j];
+		var obstaclePoint0 = obstacleEdge[0];
+		var obstaclePoint1 = obstacleEdge[1];
+
+		doesCollide = collideLineLine(visibilityPoint0[0], visibilityPoint0[1],
+				visibilityPoint1[0], visibilityPoint1[1], obstaclePoint0[0],
+				obstaclePoint0[1], obstaclePoint1[0], obstaclePoint1[1], false);
+
+		if (doesCollide == true) {
+			break;
+		}
+	}
+	return doesCollide;
+}
+
+function drawLines(lines) {
+	for (var i = 0; i < lines.length; i++) {
+		drawLine(lines[i]);
+	}
+}
+
+function drawLine(ln) {
+	var point1 = ln[0];
+	var newPoint1 = changeCordinates(point1);
+
+	var point2 = ln[1];
+	var newPoint2 = changeCordinates(point2);
+
+	line(newPoint1[0], newPoint1[1], newPoint2[0], newPoint2[1]);
+}
+
+function convexHull(points) {
+	var hullIndexes = [];
+
+	var leftMostIndex = leftMost(points);
+	hullIndexes.push(leftMostIndex);
+
+	var justInsertedIndex = leftMostIndex;
+
+	while (true) {
+		var candidateIndex = null;
+		for (var i = 0; i < points.length; i++) {
+			var currentIndex = i;
+			var currentPoint = points[i];
+			if (currentIndex == justInsertedIndex) {
+				continue;
+			} else {
+				if (candidateIndex == null) {
+					candidateIndex = currentIndex;
+					continue;
+				} else {
+					var justInsertedPoint = points[justInsertedIndex];
+					var candidatePoint = points[candidateIndex];
+					if (isLeft(justInsertedPoint, candidatePoint, currentPoint)) {
+
+						candidateIndex = currentIndex;
+					}
+				}
+			}
+		}
+		if (candidateIndex == leftMostIndex) {
+			// We came back to the first point
+			break;
+		} else {
+			hullIndexes.push(candidateIndex);
+			justInsertedIndex = candidateIndex;
+		}
+	}
+
+	var hull = [];
+	for (var i = 0; i < hullIndexes.length; i++) {
+		var hullIndex = hullIndexes[i];
+		var hullPoint = points[hullIndex];
+		hull.push(hullPoint);
+	}
+	return hull;
+}
+
+function leftMost(points) {
+	var firstPoint = points[0]; // (x,y)
+	var minX = firstPoint[0]; // x
+	var minIndex = 0;
+	for (var i = 0; i < points.length; i++) {
+		var point = points[i];
+		var pointX = point[0];
+		if (pointX < minX) {
+			minX = pointX;
+			minIndex = i;
+		}
+	}
+	return minIndex;
+}
+
+function drawCircle(center, radius) {
+	var newCenter = changeCordinates(center);
+	ellipse(newCenter[0], newCenter[1], radius, radius);
+}
+
+function drawObject(vertices) {
+	beginShape();
+	for (var j = 0; j < vertices.length; j++) {
+		var vtx = vertices[j];
+		var newVtx = changeCordinates(vtx);
+		vertex(newVtx[0], newVtx[1]);
+	}
+	endShape(CLOSE);
+}
+
+function changeCordinates(point) {
+	var changedPoint = [];
+	changedPoint[0] = point[0] + AXES_OFFSET;
+	changedPoint[1] = WINDOW_Y - point[1] - AXES_OFFSET;
+	return changedPoint;
+}
+
+function isLeft(p1, p2, p3) {
+	return ((p3[0] - p1[0]) * (p2[1] - p1[1]) > (p3[1] - p1[1])
+			* (p2[0] - p1[0]));
+}
